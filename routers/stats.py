@@ -12,11 +12,31 @@ router = APIRouter(
     tags=["Estadísticas"],
 )
 
+async def get_species_pk(code: str) -> Optional[int]:
+    """Obtiene el pk de una especie por su código."""
+    pool = db.get_connection()
+    return await pool.fetchval("SELECT pk FROM species WHERE code = $1", code)
+
+async def get_strata_pk(code: str) -> Optional[int]:
+    """Obtiene el pk de un estrato por su código."""
+    pool = db.get_connection()
+    # Convertir a int si es posible, ya que los códigos de estrato son numéricos
+    try:
+        code_int = int(code)
+        return await pool.fetchval("SELECT pk FROM strata WHERE code = $1", code_int)
+    except ValueError:
+        return None
+
+async def get_gender_pk(code: str) -> Optional[int]:
+    """Obtiene el pk de un género por su código."""
+    pool = db.get_connection()
+    return await pool.fetchval("SELECT pk FROM genders WHERE code = $1", code)
+
 @router.get(
     "/count",
     response_model=CountStat,
     summary="Obtener estadística de conteo",
-    description="Retorna la cantidad y el porcentaje de individuos para los filtros dados",
+    description="Retorna la cantidad y porcentaje de individuos para los filtros dados",
     responses={
         200: {
             "description": "Estadística de conteo obtenida exitosamente",
@@ -34,11 +54,11 @@ router = APIRouter(
                 }
             }
         },
-        500: {
-            "description": "Error interno no manejado",
+        400: {
+            "description": "Parámetros inválidos",
             "content": {
                 "application/problem+json": {
-                    "example": internal_error["content"]["application/problem+json"]["example"]
+                    "example": not_found["content"]["application/problem+json"]["example"]
                 }
             }
         },
@@ -46,7 +66,7 @@ router = APIRouter(
 )
 async def count_stats(
     speciesCode: Optional[str] = Query(None, alias="speciesCode", description="Código de especie", example="HU"),
-    strataCode:  Optional[str] = Query(None, alias="strataCode",  description="Código de estrato", example="0"),
+    strataCode:  Optional[str] = Query(None, alias="strataCode",  description="Código de estrato", example=0),
     genderCode:  Optional[str] = Query(None, alias="genderCode",  description="Código de género", example="F"),
 ):
     """
@@ -63,18 +83,46 @@ async def count_stats(
                 media_type="application/problem+json",
             )
 
-        # 2) Construir WHERE dinámico
+        # 2) Construir WHERE dinámico con conversión de códigos a IDs
         conditions = []
         args = []
+        arg_count = 0
+        
         if speciesCode is not None:
-            conditions.append(f"species_fl = ${len(args)+1}")
-            args.append(speciesCode)
+            species_pk = await get_species_pk(speciesCode)
+            if species_pk is None:
+                return JSONResponse(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    content=not_found["content"]["application/problem+json"]["example"],
+                    media_type="application/problem+json",
+                )
+            arg_count += 1
+            conditions.append(f"species_fk = ${arg_count}")
+            args.append(species_pk)
+            
         if strataCode is not None:
-            conditions.append(f"strata_fl = ${len(args)+1}")
-            args.append(strataCode)
+            strata_pk = await get_strata_pk(strataCode)
+            if strata_pk is None:
+                return JSONResponse(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    content=not_found["content"]["application/problem+json"]["example"],
+                    media_type="application/problem+json",
+                )
+            arg_count += 1
+            conditions.append(f"strata_fk = ${arg_count}")
+            args.append(strata_pk)
+            
         if genderCode is not None:
-            conditions.append(f"gender_fl = ${len(args)+1}")
-            args.append(genderCode)
+            gender_pk = await get_gender_pk(genderCode)
+            if gender_pk is None:
+                return JSONResponse(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    content=not_found["content"]["application/problem+json"]["example"],
+                    media_type="application/problem+json",
+                )
+            arg_count += 1
+            conditions.append(f"gender_fk = ${arg_count}")
+            args.append(gender_pk)
 
         # 3) Conteo filtrado
         if conditions:
@@ -91,8 +139,8 @@ async def count_stats(
                 media_type="application/problem+json",
             )
 
-        # 4) Porcentaje
-        percentage = round((count / total) * 100, 6)
+        # Porcentaje como valor entre 0 y 1, redondeado a 6 decimales
+        percentage = round(count / total, 6)
 
         return {"count": count, "percentage": percentage}
 
@@ -108,13 +156,13 @@ async def count_stats(
     "/age",
     response_model=AgeStat,
     summary="Obtener estadística de edad",
-    description="Retorna mínimo, máximo y promedio de edad para los filtros dados",
+    description="Retorna el valor mínimo, máximo y promedio de edad para los filtros dados",
     responses={
         200: {
             "description": "Estadística de edad obtenida exitosamente",
             "content": {
                 "application/json": {
-                    "example": {"min": 0, "max": 120, "avg": 65.4}
+                    "example": {"min": 18.0, "max": 99.0, "mean": 45.35, "stddev": 12.75}
                 }
             }
         },
@@ -126,11 +174,11 @@ async def count_stats(
                 }
             }
         },
-        500: {
-            "description": "Error interno no manejado",
+        400: {
+            "description": "Parámetros inválidos",
             "content": {
                 "application/problem+json": {
-                    "example": internal_error["content"]["application/problem+json"]["example"]
+                    "example": not_found["content"]["application/problem+json"]["example"]
                 }
             }
         },
@@ -138,34 +186,63 @@ async def count_stats(
 )
 async def age_stats(
     speciesCode: Optional[str] = Query(None, alias="speciesCode", description="Código de especie", example="HU"),
-    strataCode:  Optional[str] = Query(None, alias="strataCode",  description="Código de estrato", example="0"),
-    genderCode:  Optional[str] = Query(None, alias="genderCode",  description="Código de género", example="F"),
+    strataCode:  Optional[str] = Query(None, alias="strataCode",  description="Código de estrato", example=5),
+    genderCode:  Optional[str] = Query(None, alias="genderCode",  description="Código de género", example="M"),
 ):
     """
-    Calcula mínimo, máximo y promedio de edad directamente en la base de datos.
+    Calcula mínimo, máximo, promedio y desviación estándar de edad directamente en la base de datos.
     """
     pool = db.get_connection()
     try:
-        # Construir SELECT dinámico
+        # Construir SELECT dinámico con conversión de códigos a IDs
         base_sql = (
             "SELECT "
-            "MIN(date_part('year', age(birthdate)))::int AS min, "
-            "MAX(date_part('year', age(birthdate)))::int AS max, "
-            "AVG(date_part('year', age(birthdate)))::float AS avg "
+            "MIN(date_part('year', age(birthdate)))::float AS min, "
+            "MAX(date_part('year', age(birthdate)))::float AS max, "
+            "AVG(date_part('year', age(birthdate)))::float AS mean, "
+            "STDDEV(date_part('year', age(birthdate)))::float AS stddev "
             "FROM persons"
         )
 
         conditions = []
         args = []
+        arg_count = 0
+        
         if speciesCode is not None:
-            conditions.append(f"species_fl = ${len(args)+1}")
-            args.append(speciesCode)
+            species_pk = await get_species_pk(speciesCode)
+            if species_pk is None:
+                return JSONResponse(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    content=not_found["content"]["application/problem+json"]["example"],
+                    media_type="application/problem+json",
+                )
+            arg_count += 1
+            conditions.append(f"species_fk = ${arg_count}")
+            args.append(species_pk)
+            
         if strataCode is not None:
-            conditions.append(f"strata_fl = ${len(args)+1}")
-            args.append(strataCode)
+            strata_pk = await get_strata_pk(strataCode)
+            if strata_pk is None:
+                return JSONResponse(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    content=not_found["content"]["application/problem+json"]["example"],
+                    media_type="application/problem+json",
+                )
+            arg_count += 1
+            conditions.append(f"strata_fk = ${arg_count}")
+            args.append(strata_pk)
+            
         if genderCode is not None:
-            conditions.append(f"gender_fl = ${len(args)+1}")
-            args.append(genderCode)
+            gender_pk = await get_gender_pk(genderCode)
+            if gender_pk is None:
+                return JSONResponse(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    content=not_found["content"]["application/problem+json"]["example"],
+                    media_type="application/problem+json",
+                )
+            arg_count += 1
+            conditions.append(f"gender_fk = ${arg_count}")
+            args.append(gender_pk)
 
         if conditions:
             where_clause = " AND ".join(conditions)
@@ -181,11 +258,12 @@ async def age_stats(
                 media_type="application/problem+json",
             )
 
-        # El avg viene como float; redondeamos a 2 decimales
+        # Redondeamos a 4 decimales para coincidir con la API del profesor
         return {
-            "min": row["min"],
-            "max": row["max"],
-            "avg": round(row["avg"], 2),
+            "min": round(row["min"], 4),
+            "max": round(row["max"], 4),
+            "mean": round(row["mean"], 4),
+            "stddev": round(row["stddev"], 4) if row["stddev"] is not None else 0.0,
         }
 
     except Exception:
