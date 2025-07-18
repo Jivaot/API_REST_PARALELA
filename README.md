@@ -22,7 +22,8 @@ API desarrollada para el trabajo de la asignatura **Computación Paralela y Dist
    uvicorn main:app --reload --host 0.0.0.0 --port 8000
    ```
 3 **la pagina se aloja**
- ```  http://127.0.0.1:8000/docs#/
+ ```bash  
+http://127.0.0.1:8000/docs#/
   ```
 ## Endpoints principales
 
@@ -34,6 +35,6 @@ API desarrollada para el trabajo de la asignatura **Computación Paralela y Dist
 
 
 
-**Autores:** [Javier Fernandez,Glenn Lanyonn]
+**Autores:** [Javier Fernandez,Glenn Lanyonn,Felipe Miranda]
 
 **Licencia:** CC0 1.0 Universal 
